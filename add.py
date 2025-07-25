@@ -20,19 +20,19 @@ except Exception as e:
 
 st.success(f"✅ Успешно заредени {len(df)} точки")
 
-# Параметри за търсене
-st.header('2. Параметри за интерполация')
+# Настройки за номериране
+st.header('2. Настройки за номериране')
 col1, col2 = st.columns(2)
 with col1:
-    step = st.number_input("Стъпка за Z-кота", 
-                         min_value=0.001, value=1.0, step=0.1)
+    step = st.number_input("Стъпка за Z-кота", min_value=0.001, value=1.0, step=0.1)
 with col2:
-    tolerance = st.number_input("Допустимо отклонение (±)", 
-                              min_value=0.0, value=0.001, step=0.001)
+    start_id = st.number_input("Начален номер на точките", min_value=0, value=5000, step=1)
 
-# Функция за интерполация
-def interpolate_points(df, step, tolerance):
+# Функция за интерполация с променливи ID
+def interpolate_points_with_ids(df, step, start_id=5000):
     new_points = []
+    current_id = start_id
+    
     for i in range(len(df)-1):
         p1, p2 = df.iloc[i], df.iloc[i+1]
         z_min, z_max = min(p1['Z'], p2['Z']), max(p1['Z'], p2['Z'])
@@ -42,24 +42,25 @@ def interpolate_points(df, step, tolerance):
             np.floor(z_max/step)*step + step/2,
             step
         )
-        z_values = z_values[(z_values >= z_min - tolerance) & (z_values <= z_max + tolerance)]
+        z_values = z_values[(z_values > z_min) & (z_values < z_max)]
         
         for z in z_values:
             ratio = (z - p1['Z']) / (p2['Z'] - p1['Z'])
             new_points.append([
-                f"{p1['ID']}-{p2['ID']}",
+                current_id,
                 p1['X'] + ratio*(p2['X'] - p1['X']),
                 p1['Y'] + ratio*(p2['Y'] - p1['Y']),
-                z
+                round(z, 10)
             ])
+            current_id += 1
     
     return pd.DataFrame(new_points, columns=['ID','X','Y','Z'])
 
 if st.button("Генерирай точки"):
-    interpolated_df = interpolate_points(df, step, tolerance)
+    interpolated_df = interpolate_points_with_ids(df, step, start_id)
     
     if not interpolated_df.empty:
-        st.success(f"Намерени {len(interpolated_df)} интерполирани точки")
+        st.success(f"Намерени {len(interpolated_df)} интерполирани точки (ID от {start_id} до {start_id+len(interpolated_df)-1})")
         
         # Визуализация
         fig = go.Figure()
@@ -76,33 +77,36 @@ if st.button("Генерирай точки"):
             z=interpolated_df['Z'],
             mode='markers',
             marker=dict(size=6, color='red'),
-            name='Интерполирани'
+            name=f'Интерполирани (ID {start_id}-{start_id+len(interpolated_df)-1})'
         ))
         st.plotly_chart(fig, use_container_width=True)
 
         # Експорт
         st.header("3. Експорт на резултати")
-        export_format = st.radio("Формат:", ['CSV', 'TXT'])
+        export_format = st.radio("Формат:", ['CSV', 'TXT'], horizontal=True)
         
         if export_format == 'CSV':
             data = interpolated_df.to_csv(index=False)
             file_ext = 'csv'
             mime_type = 'text/csv'
         else:
-            data = interpolated_df.to_csv(index=False, sep=' ')  # TXT формат с интервали
+            data = "\n".join(
+                [f"{row['ID']},{row['X']},{row['Y']},{row['Z']}" 
+                for _, row in interpolated_df.iterrows()]
+            )
             file_ext = 'txt'
             mime_type = 'text/plain'
         
         st.download_button(
             label=f"⬇️ Свали {export_format}",
             data=data,
-            file_name=f"interpolated_points.{file_ext}",
+            file_name=f"points_{start_id}_to_{start_id+len(interpolated_df)-1}.{file_ext}",
             mime=mime_type
         )
         
         st.dataframe(interpolated_df)
     else:
-        st.warning("Не са намерени точки за избраните параметри!")
+        st.warning(f"Не са намерени точки със стъпка {step} в интервалите!")
 
 st.header("Оригинални данни")
 st.dataframe(df)
