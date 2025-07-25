@@ -49,7 +49,8 @@ if uploaded_file:
             df['Distance'] = np.sqrt(
                 (df['North'].diff()**2 + 
                  df['East'].diff()**2 + 
-                 df['Elevation'].diff()**2).cumsum().fillna(0)
+                 df['Elevation'].diff()**2)
+            ).cumsum().fillna(0)
             
             # Създаване на интерполационни функции
             f_north = interp1d(df['Distance'], df['North'], kind='linear')
