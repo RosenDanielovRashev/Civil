@@ -2,62 +2,72 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from io import StringIO
 
 st.title('Генериране на интерполирани точки')
 st.header('1. Качване на файл с координати')
 
-uploaded_file = st.file_uploader("Качете CSV/TXT файл с координати (ID,X,Y,Z)", type=['csv','txt'])
+# Зареждане на файл
+uploaded_file = st.file_uploader("Качете CSV/TXT файл (ID,X,Y,Z)", type=['csv','txt'])
 if not uploaded_file:
     st.stop()
 
 # Прочитане на данните
-df = pd.read_csv(uploaded_file, header=None, names=['ID','X','Y','Z'])
-st.success(f"Заредени са {len(df)} точки")
+try:
+    df = pd.read_csv(uploaded_file, header=None, names=['ID','X','Y','Z'])
+except Exception as e:
+    st.error(f"Грешка при четене на файла: {e}")
+    st.stop()
+
+st.success(f"✅ Успешно заредени {len(df)} точки")
 
 # Параметри за търсене
-st.header('2. Параметри за търсене')
-step = st.number_input("Стъпка за Z-кота", min_value=0.001, value=1.0, step=0.1)
-tolerance = st.number_input("Допустимо отклонение", min_value=0.0, value=0.001, step=0.001)
+st.header('2. Параметри за интерполация')
+col1, col2 = st.columns(2)
+with col1:
+    step = st.number_input("Стъпка за Z-кота", 
+                         min_value=0.001, value=1.0, step=0.1,
+                         help="Търси Z стойности кратни на това число")
+with col2:
+    tolerance = st.number_input("Допустимо отклонение (±)", 
+                              min_value=0.0, value=0.001, step=0.001,
+                              help="Допустима грешка при търсене")
 
-def find_interpolated_points(df, step, tolerance):
+# Функция за интерполация
+def interpolate_points(df, step, tolerance):
     new_points = []
-    
     for i in range(len(df)-1):
-        point1 = df.iloc[i]
-        point2 = df.iloc[i+1]
+        p1, p2 = df.iloc[i], df.iloc[i+1]
+        z_min, z_max = min(p1['Z'], p2['Z']), max(p1['Z'], p2['Z'])
         
-        z_min = min(point1['Z'], point2['Z'])
-        z_max = max(point1['Z'], point2['Z'])
+        # Намиране на кръгли стойности в интервала
+        z_values = np.arange(
+            np.ceil(z_min/step)*step,
+            np.floor(z_max/step)*step + step/2,
+            step
+        )
+        z_values = z_values[
+            (z_values >= z_min - tolerance) & 
+            (z_values <= z_max + tolerance)
+        ]
         
-        # Намираме всички кръгли стойности в този интервал
-        first_z = np.ceil(z_min / step) * step
-        last_z = np.floor(z_max / step) * step
-        z_values = np.arange(first_z, last_z + step/2, step)
-        
-        # Филтрираме стойностите в допустимия диапазон
-        z_values = z_values[(z_values >= z_min - tolerance) & (z_values <= z_max + tolerance)]
-        
-        # Интерполираме за всяка намерена Z стойност
+        # Линейна интерполация
         for z in z_values:
-            ratio = (z - point1['Z']) / (point2['Z'] - point1['Z'])
-            x = point1['X'] + ratio * (point2['X'] - point1['X'])
-            y = point1['Y'] + ratio * (point2['Y'] - point1['Y'])
-            
-            new_points.append({
-                'ID': f"{point1['ID']}-{point2['ID']}",
-                'X': x,
-                'Y': y,
-                'Z': z,
-                'Source': f"Интерполирана между {point1['ID']} и {point2['ID']}"
-            })
+            ratio = (z - p1['Z']) / (p2['Z'] - p1['Z'])
+            new_points.append([
+                f"{p1['ID']}-{p2['ID']}",
+                p1['X'] + ratio*(p2['X'] - p1['X']),
+                p1['Y'] + ratio*(p2['Y'] - p1['Y']),
+                z
+            ])
     
-    return pd.DataFrame(new_points)
+    return pd.DataFrame(new_points, columns=['ID','X','Y','Z'])
 
-if st.button("Намери интерполирани точки"):
-    interpolated_df = find_interpolated_points(df, step, tolerance)
+if st.button("Генерирай точки"):
+    interpolated_df = interpolate_points(df, step, tolerance)
     
-    if len(interpolated_df) > 0:
-        st.success(f"Намерени са {len(interpolated_df)} нови точки!")
+    if not interpolated_df.empty:
+        st.success(f"Намерени {len(interpolated_df)} интерполирани точки")
         
         # Визуализация
         fig = go.Figure()
@@ -66,7 +76,7 @@ if st.button("Намери интерполирани точки"):
             mode='lines+markers',
             line=dict(color='blue', width=2),
             marker=dict(size=4),
-            name='Оригинални точки'
+            name='Оригинални'
         ))
         fig.add_trace(go.Scatter3d(
             x=interpolated_df['X'],
@@ -74,23 +84,148 @@ if st.button("Намери интерполирани точки"):
             z=interpolated_df['Z'],
             mode='markers',
             marker=dict(size=6, color='red'),
-            name=f'Интерполирани точки (стъпка {step})'
+            name='Интерполирани'
         ))
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Показване на таблица
-        st.dataframe(interpolated_df)
-        
+
         # Експорт
-        csv = interpolated_df.to_csv(index=False).encode()
+        st.header("3. Експорт на резултати")
+        export_format = st.radio("Формат:", ['CSV', 'TXT'])
+        
+        if export_format == 'CSV':
+            data = interpolated_df.to_csv(index=False)
+            file_ext = 'csv'
+            mime_type = 'text/csv'
+        else:
+            data = interpolated_df.to_string(index=False)
+            file_ext = 'txt'
+            mime_type = 'text/plain'
+        
         st.download_button(
-            "Свали интерполирани точки като CSV",
-            csv,
-            f"interpolated_points_step_{step}.csv",
-            "text/csv"
+            label=f"⬇️ Свали {export_format}",
+            data=data,
+            file_name=f"interpolated_points.{file_ext}",
+            mime=mime_type
         )
+        
+        st.dataframe(interpolated_df)
     else:
-        st.warning("Не са намерени интерполирани точки за избраните параметри!")
+        st.warning("Не са намерени точки за избраните параметри!")
+
+st.header("Оригинални данни")
+st.dataframe(df)import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from io import StringIO
+
+st.title('Генериране на интерполирани точки')
+st.header('1. Качване на файл с координати')
+
+# Зареждане на файл
+uploaded_file = st.file_uploader("Качете CSV/TXT файл (ID,X,Y,Z)", type=['csv','txt'])
+if not uploaded_file:
+    st.stop()
+
+# Прочитане на данните
+try:
+    df = pd.read_csv(uploaded_file, header=None, names=['ID','X','Y','Z'])
+except Exception as e:
+    st.error(f"Грешка при четене на файла: {e}")
+    st.stop()
+
+st.success(f"✅ Успешно заредени {len(df)} точки")
+
+# Параметри за търсене
+st.header('2. Параметри за интерполация')
+col1, col2 = st.columns(2)
+with col1:
+    step = st.number_input("Стъпка за Z-кота", 
+                         min_value=0.001, value=1.0, step=0.1,
+                         help="Търси Z стойности кратни на това число")
+with col2:
+    tolerance = st.number_input("Допустимо отклонение (±)", 
+                              min_value=0.0, value=0.001, step=0.001,
+                              help="Допустима грешка при търсене")
+
+# Функция за интерполация
+def interpolate_points(df, step, tolerance):
+    new_points = []
+    for i in range(len(df)-1):
+        p1, p2 = df.iloc[i], df.iloc[i+1]
+        z_min, z_max = min(p1['Z'], p2['Z']), max(p1['Z'], p2['Z'])
+        
+        # Намиране на кръгли стойности в интервала
+        z_values = np.arange(
+            np.ceil(z_min/step)*step,
+            np.floor(z_max/step)*step + step/2,
+            step
+        )
+        z_values = z_values[
+            (z_values >= z_min - tolerance) & 
+            (z_values <= z_max + tolerance)
+        ]
+        
+        # Линейна интерполация
+        for z in z_values:
+            ratio = (z - p1['Z']) / (p2['Z'] - p1['Z'])
+            new_points.append([
+                f"{p1['ID']}-{p2['ID']}",
+                p1['X'] + ratio*(p2['X'] - p1['X']),
+                p1['Y'] + ratio*(p2['Y'] - p1['Y']),
+                z
+            ])
+    
+    return pd.DataFrame(new_points, columns=['ID','X','Y','Z'])
+
+if st.button("Генерирай точки"):
+    interpolated_df = interpolate_points(df, step, tolerance)
+    
+    if not interpolated_df.empty:
+        st.success(f"Намерени {len(interpolated_df)} интерполирани точки")
+        
+        # Визуализация
+        fig = go.Figure()
+        fig.add_trace(go.Scatter3d(
+            x=df['X'], y=df['Y'], z=df['Z'],
+            mode='lines+markers',
+            line=dict(color='blue', width=2),
+            marker=dict(size=4),
+            name='Оригинални'
+        ))
+        fig.add_trace(go.Scatter3d(
+            x=interpolated_df['X'],
+            y=interpolated_df['Y'],
+            z=interpolated_df['Z'],
+            mode='markers',
+            marker=dict(size=6, color='red'),
+            name='Интерполирани'
+        ))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Експорт
+        st.header("3. Експорт на резултати")
+        export_format = st.radio("Формат:", ['CSV', 'TXT'])
+        
+        if export_format == 'CSV':
+            data = interpolated_df.to_csv(index=False)
+            file_ext = 'csv'
+            mime_type = 'text/csv'
+        else:
+            data = interpolated_df.to_string(index=False)
+            file_ext = 'txt'
+            mime_type = 'text/plain'
+        
+        st.download_button(
+            label=f"⬇️ Свали {export_format}",
+            data=data,
+            file_name=f"interpolated_points.{file_ext}",
+            mime=mime_type
+        )
+        
+        st.dataframe(interpolated_df)
+    else:
+        st.warning("Не са намерени точки за избраните параметри!")
 
 st.header("Оригинални данни")
 st.dataframe(df)
