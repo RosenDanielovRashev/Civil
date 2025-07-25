@@ -1,85 +1,96 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
-from io import StringIO
 
-# Настройки на страницата
-st.set_page_config(layout="wide")
-st.title("📌 Анализ на геодезически координати")
-st.write("Заредете файл с координати (ID,X,Y,Z) за визуализация и експорт")
+st.title('Генериране на интерполирани точки')
+st.header('1. Качване на файл с координати')
 
-# 1. Зареждане на файл
-uploaded_file = st.file_uploader("Качете CSV/TXT файл", type=['csv','txt'])
+uploaded_file = st.file_uploader("Качете CSV/TXT файл с координати (ID,X,Y,Z)", type=['csv','txt'])
 if not uploaded_file:
     st.stop()
 
 # Прочитане на данните
-try:
-    df = pd.read_csv(uploaded_file, header=None, names=['ID','X','Y','Z'])
-except Exception as e:
-    st.error(f"Грешка при четене на файла: {e}")
-    st.stop()
+df = pd.read_csv(uploaded_file, header=None, names=['ID','X','Y','Z'])
+st.success(f"Заредени са {len(df)} точки")
 
-st.success(f"✅ Успешно заредени {len(df)} точки")
+# Параметри за търсене
+st.header('2. Параметри за търсене')
+step = st.number_input("Стъпка за Z-кота", min_value=0.001, value=1.0, step=0.1)
+tolerance = st.number_input("Допустимо отклонение", min_value=0.0, value=0.001, step=0.001)
 
-# 2. Визуализация
-col1, col2 = st.columns([2, 1])
-with col1:
-    st.subheader("3D Визуализация")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter3d(
-        x=df['X'], y=df['Y'], z=df['Z'],
-        mode='lines+markers',
-        line=dict(color='royalblue', width=2),
-        marker=dict(size=4, color='red'),
-        name='Траектория'
-    ))
-    st.plotly_chart(fig, use_container_width=True, height=600)
-
-# 3. Търсене на кръгли коти
-with col2:
-    st.subheader("Филтриране")
-    step = st.number_input("Стъпка за Z-кота", 
-                         min_value=0.001, value=0.1, step=0.01,
-                         help="Търси Z стойности кратни на това число")
+def find_interpolated_points(df, step, tolerance):
+    new_points = []
     
-    tolerance = st.number_input("Допустимо отклонение (±)", 
-                              min_value=0.0, value=0.001, step=0.001,
-                              help="Допускова грешка при търсене")
+    for i in range(len(df)-1):
+        point1 = df.iloc[i]
+        point2 = df.iloc[i+1]
+        
+        z_min = min(point1['Z'], point2['Z'])
+        z_max = max(point1['Z'], point2['Z'])
+        
+        # Намираме всички кръгли стойности в този интервал
+        first_z = np.ceil(z_min / step) * step
+        last_z = np.floor(z_max / step) * step
+        z_values = np.arange(first_z, last_z + step/2, step)
+        
+        # Филтрираме стойностите в допустимия диапазон
+        z_values = z_values[(z_values >= z_min - tolerance) & (z_values <= z_max + tolerance)]
+        
+        # Интерполираме за всяка намерена Z стойност
+        for z in z_values:
+            ratio = (z - point1['Z']) / (point2['Z'] - point1['Z'])
+            x = point1['X'] + ratio * (point2['X'] - point1['X'])
+            y = point1['Y'] + ratio * (point2['Y'] - point1['Y'])
+            
+            new_points.append({
+                'ID': f"{point1['ID']}-{point2['ID']}",
+                'X': x,
+                'Y': y,
+                'Z': z,
+                'Source': f"Интерполирана между {point1['ID']} и {point2['ID']}"
+            })
+    
+    return pd.DataFrame(new_points)
 
-    if st.button("Приложи филтър"):
-        df['Z_rounded'] = (df['Z'] / step).round() * step
-        filtered = df[np.abs(df['Z'] - df['Z_rounded']) <= tolerance]
-        st.session_state.filtered_df = filtered
+if st.button("Намери интерполирани точки"):
+    interpolated_df = find_interpolated_points(df, step, tolerance)
+    
+    if len(interpolated_df) > 0:
+        st.success(f"Намерени са {len(interpolated_df)} нови точки!")
+        
+        # Визуализация
+        fig = go.Figure()
+        fig.add_trace(go.Scatter3d(
+            x=df['X'], y=df['Y'], z=df['Z'],
+            mode='lines+markers',
+            line=dict(color='blue', width=2),
+            marker=dict(size=4),
+            name='Оригинални точки'
+        ))
+        fig.add_trace(go.Scatter3d(
+            x=interpolated_df['X'],
+            y=interpolated_df['Y'],
+            z=interpolated_df['Z'],
+            mode='markers',
+            marker=dict(size=6, color='red'),
+            name=f'Интерполирани точки (стъпка {step})'
+        ))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Показване на таблица
+        st.dataframe(interpolated_df)
+        
+        # Експорт
+        csv = interpolated_df.to_csv(index=False).encode()
+        st.download_button(
+            "Свали интерполирани точки като CSV",
+            csv,
+            f"interpolated_points_step_{step}.csv",
+            "text/csv"
+        )
+    else:
+        st.warning("Не са намерени интерполирани точки за избраните параметри!")
 
-# 4. Експорт на данни
-st.subheader("📤 Експорт на данни")
-export_type = st.radio("Какви данни да се експортират:",
-                      ["Всички точки", "Филтрирани точки"])
-
-if export_type == "Филтрирани точки" and 'filtered_df' not in st.session_state:
-    st.warning("Първо приложете филтър!")
-    st.stop()
-
-export_df = st.session_state.filtered_df if export_type == "Филтрирани точки" else df
-
-# Избор на колони
-cols = st.multiselect("Изберете колони за експорт",
-                     export_df.columns.tolist(),
-                     default=['ID','X','Y','Z'])
-
-if cols:
-    csv_data = export_df[cols].to_csv(index=False)
-    st.download_button(
-        label="⬇️ Свали CSV",
-        data=csv_data,
-        file_name=f"coordinates_{export_type.lower().replace(' ', '_')}.csv",
-        mime="text/csv",
-        help="Експорт на избраните данни във формат CSV"
-    )
-else:
-    st.warning("Изберете поне една колона за експорт")
-
-# Показване на данните
-st.subheader("🗃️ Преглед на данните")
-st.dataframe(export_df[cols] if cols else export_df, height=300)
+st.header("Оригинални данни")
+st.dataframe(df)
