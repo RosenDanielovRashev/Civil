@@ -64,7 +64,9 @@ if st.button("Генерирай точки"):
         # Експорт в CSV и TXT
         st.header("3. Експорт на резултати")
         csv_data = interpolated_df.to_csv(index=False)
-        txt_data = interpolated_df.to_csv(index=False, sep='\t')
+        
+        # Създаване на TXT файл без header и с запетаи като разделител
+        txt_data = interpolated_df.to_csv(index=False, header=False, sep=',')
         
         col1, col2 = st.columns(2)
         with col1:
