@@ -61,16 +61,26 @@ if st.button("Генерирай точки"):
     if not interpolated_df.empty:
         st.success(f"Намерени {len(interpolated_df)} интерполирани точки (ID от {start_id} до {start_id+len(interpolated_df)-1})")
         
-        # Експорт само в CSV (без TXT)
+        # Експорт в CSV и TXT
         st.header("3. Експорт на резултати")
         csv_data = interpolated_df.to_csv(index=False)
+        txt_data = interpolated_df.to_csv(index=False, sep='\t')
         
-        st.download_button(
-            label="⬇️ Свали CSV",
-            data=csv_data,
-            file_name=f"interpolated_points_{start_id}_to_{start_id+len(interpolated_df)-1}.csv",
-            mime='text/csv'
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="⬇️ Свали CSV",
+                data=csv_data,
+                file_name=f"interpolated_points_{start_id}_to_{start_id+len(interpolated_df)-1}.csv",
+                mime='text/csv'
+            )
+        with col2:
+            st.download_button(
+                label="⬇️ Свали TXT",
+                data=txt_data,
+                file_name=f"interpolated_points_{start_id}_to_{start_id+len(interpolated_df)-1}.txt",
+                mime='text/plain'
+            )
         
         st.dataframe(interpolated_df)
     else:
