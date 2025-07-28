@@ -1,19 +1,18 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 
 st.title('Генериране на интерполирани точки')
 st.header('1. Качване на файл с координати')
 
-# Зареждане на файл
-uploaded_file = st.file_uploader("Качете CSV/TXT файл (ID,X,Y,Z)", type=['csv','txt'])
+# Зареждане на файл (CSV или TXT)
+uploaded_file = st.file_uploader("Качете CSV/TXT файл (ID,X,Y,Z)", type=['csv', 'txt'])
 if not uploaded_file:
     st.stop()
 
-# Прочитане на данните
+# Прочитане на данните (работи с CSV и TXT)
 try:
-    df = pd.read_csv(uploaded_file, header=None, names=['ID','X','Y','Z'])
+    df = pd.read_csv(uploaded_file, header=None, names=['ID', 'X', 'Y', 'Z'])
 except Exception as e:
     st.error(f"Грешка при четене на файла: {e}")
     st.stop()
@@ -54,7 +53,7 @@ def interpolate_points_with_ids(df, step, start_id=5000):
             ])
             current_id += 1
     
-    return pd.DataFrame(new_points, columns=['ID','X','Y','Z'])
+    return pd.DataFrame(new_points, columns=['ID', 'X', 'Y', 'Z'])
 
 if st.button("Генерирай точки"):
     interpolated_df = interpolate_points_with_ids(df, step, start_id)
@@ -62,46 +61,15 @@ if st.button("Генерирай точки"):
     if not interpolated_df.empty:
         st.success(f"Намерени {len(interpolated_df)} интерполирани точки (ID от {start_id} до {start_id+len(interpolated_df)-1})")
         
-        # Визуализация
-        fig = go.Figure()
-        fig.add_trace(go.Scatter3d(
-            x=df['X'], y=df['Y'], z=df['Z'],
-            mode='lines+markers',
-            line=dict(color='blue', width=2),
-            marker=dict(size=4),
-            name='Оригинални'
-        ))
-        fig.add_trace(go.Scatter3d(
-            x=interpolated_df['X'],
-            y=interpolated_df['Y'],
-            z=interpolated_df['Z'],
-            mode='markers',
-            marker=dict(size=6, color='red'),
-            name=f'Интерполирани (ID {start_id}-{start_id+len(interpolated_df)-1})'
-        ))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Експорт
+        # Експорт само в CSV (без TXT)
         st.header("3. Експорт на резултати")
-        export_format = st.radio("Формат:", ['CSV', 'TXT'], horizontal=True)
-        
-        if export_format == 'CSV':
-            data = interpolated_df.to_csv(index=False)
-            file_ext = 'csv'
-            mime_type = 'text/csv'
-        else:
-            data = "\n".join(
-                [f"{row['ID']},{row['X']},{row['Y']},{row['Z']}" 
-                for _, row in interpolated_df.iterrows()]
-            )
-            file_ext = 'txt'
-            mime_type = 'text/plain'
+        csv_data = interpolated_df.to_csv(index=False)
         
         st.download_button(
-            label=f"⬇️ Свали {export_format}",
-            data=data,
-            file_name=f"points_{start_id}_to_{start_id+len(interpolated_df)-1}.{file_ext}",
-            mime=mime_type
+            label="⬇️ Свали CSV",
+            data=csv_data,
+            file_name=f"interpolated_points_{start_id}_to_{start_id+len(interpolated_df)-1}.csv",
+            mime='text/csv'
         )
         
         st.dataframe(interpolated_df)
